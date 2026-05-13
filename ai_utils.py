@@ -1,7 +1,7 @@
 """
 ai_utils.py — AI integration for resume analysis.
 Supports OpenAI and Gemini APIs with a dynamic keyword-based fallback.
-API key loaded from st.secrets first, then os.getenv.
+API keys are loaded lazily (inside functions) so st.secrets is always available.
 """
 
 import os
@@ -15,13 +15,12 @@ from scoring import (
     extract_job_skills,
     calculate_job_match,
     calculate_ats_score,
-    get_ats_feedback,
     ROLE_SKILLS,
 )
 
 
 # ─────────────────────────────────────────────
-# API KEY LOADING
+# API KEY LOADING  (lazy — called inside functions)
 # ─────────────────────────────────────────────
 
 def _get_api_key(name: str) -> str:
@@ -29,43 +28,44 @@ def _get_api_key(name: str) -> str:
     try:
         val = st.secrets.get(name, "")
         if val:
-            return val
+            return str(val)
     except Exception:
         pass
     return os.getenv(name, "")
 
 
-OPENAI_API_KEY = _get_api_key("OPENAI_API_KEY")
-GEMINI_API_KEY = _get_api_key("GEMINI_API_KEY")
+def _resolve_keys():
+    """Return (openai_key, gemini_key) at call time."""
+    return _get_api_key("OPENAI_API_KEY"), _get_api_key("GEMINI_API_KEY")
 
-# Determine which API to use
-USE_OPENAI = bool(OPENAI_API_KEY)
-USE_GEMINI = bool(GEMINI_API_KEY) and not USE_OPENAI
 
+# ─────────────────────────────────────────────
+# PUBLIC STATUS HELPER
+# ─────────────────────────────────────────────
 
 def get_api_status() -> Dict[str, Any]:
     """Return API availability status for display in sidebar."""
+    openai_key, gemini_key = _resolve_keys()
+    use_openai = bool(openai_key)
+    use_gemini = bool(gemini_key) and not use_openai
     return {
-        "openai_available": USE_OPENAI,
-        "gemini_available": USE_GEMINI,
-        "api_available": USE_OPENAI or USE_GEMINI,
-        "provider": "OpenAI" if USE_OPENAI else ("Gemini" if USE_GEMINI else "None"),
+        "openai_available": use_openai,
+        "gemini_available": use_gemini,
+        "api_available": use_openai or use_gemini,
+        "provider": "OpenAI" if use_openai else ("Gemini" if use_gemini else "None"),
     }
 
 
 # ─────────────────────────────────────────────
-# AI PROMPT BUILDER
+# PROMPT BUILDER
 # ─────────────────────────────────────────────
 
-def build_prompt(resume_text: str, job_description: str, role: str) -> str:
-    """
-    Build a structured prompt that forces the AI to analyze THIS specific resume
-    and return a JSON object with dynamic, resume-specific values.
-    """
+def _build_prompt(resume_text: str, job_description: str, role: str) -> str:
+    """Build a structured prompt that forces the AI to analyse THIS specific resume."""
     return f"""You are an expert ATS Resume Analyzer and career coach.
 
 IMPORTANT INSTRUCTIONS:
-- Analyze ONLY the resume text provided below — do NOT use generic or placeholder content.
+- Analyse ONLY the resume text provided below — do NOT use generic or placeholder content.
 - Every score, skill, and suggestion must be based on EVIDENCE from the actual resume text.
 - Do NOT return the same output for every resume. Your output MUST reflect the specific candidate.
 - Return ONLY valid JSON, no explanation text before or after.
@@ -80,7 +80,7 @@ TARGET JOB DESCRIPTION / ROLE:
 {job_description or f"General {role} role"}
 \"\"\"
 
-Analyze this specific resume and return ONLY this JSON structure (no markdown, no backticks):
+Analyse this specific resume and return ONLY this JSON structure (no markdown, no backticks):
 {{
   "candidate_summary": "2-3 sentence summary of THIS specific candidate based on their actual resume",
   "extracted_skills": ["list", "of", "skills", "ACTUALLY", "found", "in", "this", "resume"],
@@ -109,15 +109,15 @@ SCORING RULES:
 
 
 # ─────────────────────────────────────────────
-# OPENAI CALL
+# API CALLERS
 # ─────────────────────────────────────────────
 
-def _call_openai(prompt: str) -> str:
+def _call_openai(prompt: str, api_key: str) -> str:
     """Call OpenAI API and return raw response text."""
     from openai import OpenAI
-    client = OpenAI(api_key=OPENAI_API_KEY)
+    client = OpenAI(api_key=api_key)
     response = client.chat.completions.create(
-        model="gpt-4o-mini",  # Use gpt-4o-mini — widely available
+        model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.4,
         max_tokens=2000,
@@ -125,14 +125,10 @@ def _call_openai(prompt: str) -> str:
     return response.choices[0].message.content
 
 
-# ─────────────────────────────────────────────
-# GEMINI CALL
-# ─────────────────────────────────────────────
-
-def _call_gemini(prompt: str) -> str:
+def _call_gemini(prompt: str, api_key: str) -> str:
     """Call Gemini API and return raw response text."""
     import google.generativeai as genai
-    genai.configure(api_key=GEMINI_API_KEY)
+    genai.configure(api_key=api_key)
     model = genai.GenerativeModel("gemini-1.5-flash")
     response = model.generate_content(prompt)
     return response.text
@@ -147,19 +143,16 @@ def _parse_json_response(raw: str) -> Dict[str, Any]:
     Safely parse JSON from AI response.
     Handles: markdown code fences, trailing commas, truncated JSON.
     """
-    # Strip markdown code fences
     raw = raw.strip()
     raw = re.sub(r'^```(?:json)?\s*', '', raw)
     raw = re.sub(r'\s*```$', '', raw)
     raw = raw.strip()
 
-    # Try direct parse
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
         pass
 
-    # Try to extract JSON object
     match = re.search(r'\{.*\}', raw, re.DOTALL)
     if match:
         try:
@@ -190,9 +183,9 @@ def _dynamic_fallback(
     match_pct, matched_skills, missing_skills = calculate_job_match(
         resume_skills, job_skills, resume_text, job_description
     )
-    ats_score, ats_breakdown = calculate_ats_score(resume_text, job_description, job_skills)
+    ats_score, _ = calculate_ats_score(resume_text, job_description, job_skills)
 
-    # Build dynamic strengths
+    # Dynamic strengths
     strengths = []
     if len(resume_skills) >= 8:
         strengths.append(f"Broad technical skill set with {len(resume_skills)} identified skills")
@@ -202,12 +195,12 @@ def _dynamic_fallback(
         strengths.append("Formal academic education in a relevant field")
     if any(kw in resume_text.lower() for kw in ["internship", "experience", "worked"]):
         strengths.append("Has professional or internship experience")
-    if len(matched_skills) > 0:
+    if matched_skills:
         strengths.append(f"Matches {len(matched_skills)} of {len(job_skills)} required skills for the role")
     if not strengths:
         strengths = ["Has foundational skills relevant to the field"]
 
-    # Build dynamic weaknesses
+    # Dynamic weaknesses
     weaknesses = []
     if len(missing_skills) > 3:
         weaknesses.append(f"Missing {len(missing_skills)} key skills required for the {role} role")
@@ -220,7 +213,7 @@ def _dynamic_fallback(
     if not weaknesses:
         weaknesses = ["Resume could benefit from more quantified achievements"]
 
-    # Build interview questions based on actual skills and gaps
+    # Interview questions based on actual skills and gaps
     interview_questions = []
     if matched_skills:
         interview_questions.append(
@@ -242,7 +235,6 @@ def _dynamic_fallback(
         "Describe a challenging technical problem you solved and how you approached it."
     )
 
-    # Voice feedback text
     match_word = "strong" if match_pct >= 70 else ("moderate" if match_pct >= 45 else "limited")
     voice_text = (
         f"Your resume shows a {match_word} match of {match_pct}% for the {role} role. "
@@ -295,26 +287,28 @@ def analyze_resume(
     """
     required_skills = ROLE_SKILLS.get(role, [])
 
-    # Build effective job description for analysis
     effective_job_desc = job_description.strip()
     if not effective_job_desc and required_skills:
         effective_job_desc = (
             f"Looking for a {role} with skills in: " + ", ".join(required_skills)
         )
 
-    # Try AI API
-    if USE_OPENAI or USE_GEMINI:
-        try:
-            prompt = build_prompt(resume_text, effective_job_desc, role)
+    # Resolve API keys lazily at call time
+    openai_key, gemini_key = _resolve_keys()
+    use_openai = bool(openai_key)
+    use_gemini = bool(gemini_key) and not use_openai
 
-            if USE_OPENAI:
-                raw_response = _call_openai(prompt)
+    if use_openai or use_gemini:
+        try:
+            prompt = _build_prompt(resume_text, effective_job_desc, role)
+
+            if use_openai:
+                raw_response = _call_openai(prompt, openai_key)
             else:
-                raw_response = _call_gemini(prompt)
+                raw_response = _call_gemini(prompt, gemini_key)
 
             result = _parse_json_response(raw_response)
 
-            # Validate essential fields exist
             required_fields = [
                 "candidate_summary", "extracted_skills", "job_match_percentage",
                 "ats_score", "missing_skills",
@@ -323,7 +317,6 @@ def analyze_resume(
                 if field not in result:
                     raise ValueError(f"Missing field in AI response: {field}")
 
-            # Ensure numeric types
             result["job_match_percentage"] = int(result.get("job_match_percentage", 0))
             result["ats_score"] = int(result.get("ats_score", 0))
             result["_used_fallback"] = False
@@ -336,8 +329,7 @@ def analyze_resume(
                 f"Results are still based on your actual resume content."
             )
 
-    # Dynamic fallback (also used when no API key is configured)
-    if not USE_OPENAI and not USE_GEMINI:
+    if not use_openai and not use_gemini:
         st.info(
             "ℹ️ No API key configured. "
             "Running dynamic keyword-based analysis on your resume."

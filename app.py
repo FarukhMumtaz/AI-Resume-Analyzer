@@ -3,10 +3,8 @@ app.py — AI Resume Analyzer — Smart ATS & Job Match Assistant
 Complete Streamlit frontend with professional UI, all features integrated.
 """
 
-import streamlit as st
-import io
 import os
-import tempfile
+import streamlit as st
 from datetime import datetime
 
 from resume_parser import parse_resume
@@ -88,29 +86,6 @@ html, body, [class*="css"] {
 }
 .feature-card .icon { font-size: 1.6rem; margin-bottom: 6px; }
 .feature-card .label { font-size: 0.78rem; font-weight: 500; color: #a0a0c0; }
-
-/* Upload / Input cards */
-.card {
-    background: #ffffff;
-    border: 1px solid #e5e7eb;
-    border-radius: 14px;
-    padding: 1.4rem 1.6rem;
-    margin-bottom: 1.2rem;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-}
-.card-dark {
-    background: linear-gradient(135deg, #1a1a2e, #16213e);
-    border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 14px;
-    padding: 1.4rem 1.6rem;
-    margin-bottom: 1.2rem;
-}
-.card-title {
-    font-size: 1rem;
-    font-weight: 600;
-    color: #111827;
-    margin-bottom: 0.8rem;
-}
 
 /* Metric cards */
 .metric-grid {
@@ -223,6 +198,18 @@ section[data-testid="stSidebar"] * {
     margin-top: 0.8rem;
 }
 
+/* Voice / feedback card */
+.feedback-card {
+    background: linear-gradient(135deg, #1a1a2e, #16213e);
+    border: 1px solid rgba(102,126,234,0.4);
+    border-radius: 14px;
+    padding: 1.4rem 1.6rem;
+    font-size: 1rem;
+    line-height: 1.7;
+    color: #e0e0f0;
+    font-style: italic;
+}
+
 /* Tab styling */
 .stTabs [data-baseweb="tab-list"] {
     gap: 4px;
@@ -275,7 +262,7 @@ with st.sidebar:
 - ✅ ATS Score
 - ✅ Missing Skills
 - ✅ Interview Questions
-- ✅ Voice Feedback
+- ✅ AI Feedback Summary
 - ✅ Download Report
     """)
     st.markdown("---")
@@ -288,8 +275,8 @@ with st.sidebar:
 st.markdown("""
 <div class="hero-header">
     <h1>🚀 AI Resume Analyzer</h1>
-    <p>Smart ATS Scoring · Job Match Analysis · Interview Prep · Voice Feedback</p>
-    <span class="hero-badge">✨ Hackathon Edition — Powered by AI</span>
+    <p>Smart ATS Scoring · Job Match Analysis · Interview Prep · AI Feedback</p>
+    <span class="hero-badge">✨ Powered by AI — Dynamic Analysis for Every Resume</span>
 </div>
 """, unsafe_allow_html=True)
 
@@ -300,7 +287,7 @@ st.markdown("""
     <div class="feature-card"><div class="icon">🤖</div><div class="label">ATS Score</div></div>
     <div class="feature-card"><div class="icon">🧠</div><div class="label">Skill Analysis</div></div>
     <div class="feature-card"><div class="icon">❓</div><div class="label">Interview Prep</div></div>
-    <div class="feature-card"><div class="icon">🔊</div><div class="label">Voice Feedback</div></div>
+    <div class="feature-card"><div class="icon">💡</div><div class="label">AI Feedback</div></div>
     <div class="feature-card"><div class="icon">📥</div><div class="label">Download Report</div></div>
 </div>
 """, unsafe_allow_html=True)
@@ -378,12 +365,6 @@ if analyze_btn:
             st.error(f"❌ {str(e)}")
             st.stop()
 
-    # Show extracted preview
-    with st.expander("🔍 Extracted Resume Preview (click to expand)", expanded=False):
-        st.caption("First 500 characters of extracted resume text:")
-        st.code(resume_text[:500] + ("..." if len(resume_text) > 500 else ""), language=None)
-        st.caption(f"Total extracted: **{len(resume_text.split())} words**, {len(resume_text)} characters")
-
     # ── 2. Run AI analysis ───────────────────────────
     with st.spinner("🤖 Analyzing your resume with AI..."):
         result = analyze_resume(resume_text, job_description, selected_role)
@@ -392,9 +373,9 @@ if analyze_btn:
     st.markdown("---")
 
     # ── 3. Metric Cards ──────────────────────────────
-    match_pct = result.get("job_match_percentage", 0)
-    ats_score  = result.get("ats_score", 0)
-    skills_found  = len(result.get("extracted_skills", []))
+    match_pct    = result.get("job_match_percentage", 0)
+    ats_score    = result.get("ats_score", 0)
+    skills_found = len(result.get("extracted_skills", []))
     missing_count = len(result.get("missing_skills", []))
 
     def metric_color(val):
@@ -443,7 +424,7 @@ if analyze_btn:
         "🤖 ATS Report",
         "⚠️ Missing Skills",
         "❓ Interview Questions",
-        "🔊 Voice Feedback",
+        "📄 Text Preview",
     ])
 
     # ── TAB 1: SUMMARY ───────────────────────────────
@@ -465,6 +446,15 @@ if analyze_btn:
         for i, suggestion in enumerate(result.get("improvement_suggestions", []), 1):
             st.markdown(f"**{i}.** {suggestion}")
 
+        # AI Feedback Summary (replaces voice)
+        voice_text = result.get("voice_feedback_text", "")
+        if voice_text:
+            st.markdown('<div class="section-header">🗣️ AI Feedback Summary</div>', unsafe_allow_html=True)
+            st.markdown(
+                f'<div class="feedback-card">{voice_text}</div>',
+                unsafe_allow_html=True,
+            )
+
         if result.get("_used_fallback"):
             st.caption("ℹ️ Analysis performed using keyword-based engine (API unavailable).")
 
@@ -475,7 +465,7 @@ if analyze_btn:
         if job_description.strip():
             required_skills = extract_job_skills(job_description) or required_skills
 
-        matched_skills  = [s for s in extracted_skills if s.lower() in {r.lower() for r in required_skills}]
+        matched_skills   = [s for s in extracted_skills if s.lower() in {r.lower() for r in required_skills}]
         unmatched_skills = [s for s in extracted_skills if s.lower() not in {r.lower() for r in required_skills}]
 
         st.markdown('<div class="section-header">✅ Matched Skills (in resume & job)</div>', unsafe_allow_html=True)
@@ -494,14 +484,17 @@ if analyze_btn:
 
         if unmatched_skills:
             st.markdown('<div class="section-header">➕ Other Skills (not in job desc)</div>', unsafe_allow_html=True)
-            badges = "".join(f'<span class="skill-badge" style="background:linear-gradient(135deg,#4b6cb7,#182848)">{s}</span>' for s in unmatched_skills)
+            badges = "".join(
+                f'<span class="skill-badge" style="background:linear-gradient(135deg,#4b6cb7,#182848)">{s}</span>'
+                for s in unmatched_skills
+            )
             st.markdown(badges, unsafe_allow_html=True)
 
     # ── TAB 3: ATS REPORT ────────────────────────────
     with tab3:
         st.markdown('<div class="section-header">🤖 ATS Score Breakdown</div>', unsafe_allow_html=True)
-        req_skills = ROLE_SKILLS.get(selected_role, [])
-        _, ats_breakdown = calculate_ats_score(resume_text, job_description, req_skills)
+        req_skills_for_ats = ROLE_SKILLS.get(selected_role, [])
+        _, ats_breakdown = calculate_ats_score(resume_text, job_description, req_skills_for_ats)
 
         max_scores = {
             "Contact Information": 10,
@@ -544,7 +537,7 @@ if analyze_btn:
                     f"- **{skill}**: "
                     f"[YouTube](https://youtube.com/results?search_query={query}+tutorial) · "
                     f"[Coursera](https://coursera.org/search?query={query}) · "
-                    f"[Documentation](https://google.com/search?q={query}+official+docs)"
+                    f"[Docs](https://google.com/search?q={query}+official+docs)"
                 )
         else:
             st.success("🎉 Great! Your resume covers all the key skills for this role!")
@@ -561,39 +554,18 @@ if analyze_btn:
                 st.markdown(f"**{question}**")
                 st.caption("Prepare a structured answer using the STAR method: Situation → Task → Action → Result")
 
-    # ── TAB 6: VOICE FEEDBACK ────────────────────────
+    # ── TAB 6: EXTRACTED TEXT PREVIEW ────────────────
     with tab6:
-        voice_text = result.get("voice_feedback_text", "")
-        st.markdown('<div class="section-header">🔊 Voice Feedback</div>', unsafe_allow_html=True)
-
-        if voice_text:
-            st.markdown(f"> {voice_text}")
-            st.markdown("---")
-
-            # Try gTTS
-            voice_generated = False
-            try:
-                from gtts import gTTS
-                tts = gTTS(text=voice_text, lang="en", slow=False)
-                audio_buffer = io.BytesIO()
-                tts.write_to_fp(audio_buffer)
-                audio_buffer.seek(0)
-                st.audio(audio_buffer, format="audio/mp3")
-                st.caption("🔊 Click play to hear your personalized feedback")
-                voice_generated = True
-            except ImportError:
-                st.info("ℹ️ gTTS not installed. Install with `pip install gTTS` for audio playback.")
-            except Exception as e:
-                st.warning(f"⚠️ Audio generation failed: {str(e)[:60]}. The text feedback above is your voice summary.")
-
-            if not voice_generated:
-                st.markdown("**📝 Voice Feedback Text (read aloud):**")
-                st.markdown(
-                    f'<div style="background:#f8f9fa;border-radius:10px;padding:1rem;'
-                    f'border-left:4px solid #667eea;font-style:italic;color:#374151;">'
-                    f'{voice_text}</div>',
-                    unsafe_allow_html=True,
-                )
+        st.markdown('<div class="section-header">📄 Extracted Resume Text</div>', unsafe_allow_html=True)
+        st.caption(f"Total extracted: **{len(resume_text.split())} words**, {len(resume_text)} characters")
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.text_area(
+            "Full extracted text",
+            value=resume_text,
+            height=400,
+            label_visibility="collapsed",
+        )
+        st.caption("ℹ️ This is the raw text extracted from your resume file. Verify it looks correct — if it appears garbled, your PDF may be image-based (not supported).")
 
     # ── 5. DOWNLOAD REPORT ───────────────────────────
     st.markdown("---")
@@ -641,7 +613,7 @@ if analyze_btn:
         "-" * 40,
         *[f"  Q{i+1}. {q}" for i, q in enumerate(result.get("interview_questions", []))],
         "",
-        "VOICE FEEDBACK TEXT",
+        "AI FEEDBACK SUMMARY",
         "-" * 40,
         result.get("voice_feedback_text", "—"),
         "",
@@ -674,7 +646,7 @@ st.markdown("---")
 st.markdown(
     '<div style="text-align:center;color:#9ca3af;font-size:0.8rem;">'
     '🚀 AI Resume Analyzer · Built with Streamlit + OpenAI/Gemini · '
-    'Hackathon Edition'
+    'Smart ATS & Job Match Assistant'
     '</div>',
     unsafe_allow_html=True,
 )
