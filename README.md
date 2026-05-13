@@ -1,5 +1,7 @@
 # 📄 AI Resume Analyzer
 
+https://ai-resume-analyzer-005.streamlit.app/
+
 An AI-powered Resume Analyzer built with Streamlit and OpenAI API.  
 This application analyzes resumes, provides ATS-based feedback, identifies missing skills, and suggests improvements for specific job roles.
 
