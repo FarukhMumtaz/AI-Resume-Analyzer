@@ -170,7 +170,7 @@ streamlit run app.py
 | ----------------- | ---------------------------------------------------------------------- |
 | **Farukh Mumtaz** | DevSecOps Perspective, Cloud Deployment, Backend Logic,Testing |
 | **Hamza Ali**     | Resume Processing, Feature Engineering & Analysis,AI Integration                      |
-| **TBD**           | Frontend/UI Development, Dashboard Design                   |
+| **member3**           | Frontend/UI Development, Dashboard Design                   |
 
 ---
 
