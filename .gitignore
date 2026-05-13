@@ -1,4 +1,4 @@
-# Environment variables
+# Environment variables — never commit these
 .env
 .env.*
 !.env.example
@@ -15,12 +15,14 @@ env/
 .venv/
 ENV/
 
-# Streamlit secrets
+# Streamlit secrets — never commit
 .streamlit/secrets.toml
 
 # IDE / Editor
 .vscode/
 .idea/
+*.swp
+*.swo
 
 # OS files
 .DS_Store
@@ -39,6 +41,9 @@ uploads/
 temp/
 *.pdf
 *.docx
+
+# Audio temp files (voice feedback)
+*.mp3
 
 # Jupyter
 .ipynb_checkpoints/
