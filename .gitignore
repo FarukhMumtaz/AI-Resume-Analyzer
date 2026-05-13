@@ -6,28 +6,39 @@
 # Python cache
 __pycache__/
 *.py[cod]
+*.pyo
+*.pyd
 
 # Virtual environment
 venv/
 env/
 .venv/
+ENV/
 
 # Streamlit secrets
 .streamlit/secrets.toml
 
-# IDE
+# IDE / Editor
 .vscode/
 .idea/
 
-# OS
+# OS files
 .DS_Store
 Thumbs.db
 
 # Logs
 *.log
 
-# Uploaded files
+# Build / Distribution
+build/
+dist/
+*.egg-info/
+
+# Uploaded resumes / temporary files
 uploads/
 temp/
 *.pdf
 *.docx
+
+# Jupyter
+.ipynb_checkpoints/
