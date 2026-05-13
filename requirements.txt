@@ -1,4 +1,7 @@
 streamlit
+openai
 python-dotenv
-PyPDF2
-groq
+pypdf
+langchain
+langchain-openai
+tiktoken
