@@ -1,14 +1,18 @@
 """
 ai_utils.py — AI integration for resume analysis.
-Supports OpenAI and Gemini APIs with a dynamic keyword-based fallback.
+Uses Groq API (OpenAI-compatible, ultra-fast) with automatic model fallback
+and a dynamic keyword-based local fallback when no API is available.
 API keys are loaded lazily (inside functions) so st.secrets is always available.
 """
 
 import os
 import json
 import re
+import traceback
 import streamlit as st
-from typing import Dict, Any
+from typing import Dict, Any, List
+
+from dotenv import load_dotenv
 
 from scoring import (
     extract_skills,
@@ -20,23 +24,43 @@ from scoring import (
 
 
 # ─────────────────────────────────────────────
+# MODEL CHAIN — tried in order, first success wins
+# ─────────────────────────────────────────────
+
+GROQ_MODELS: List[str] = [
+    "llama-3.3-70b-versatile",
+    "llama-3.1-8b-instant",
+]
+
+
+# ─────────────────────────────────────────────
 # API KEY LOADING  (lazy — called inside functions)
 # ─────────────────────────────────────────────
 
-def _get_api_key(name: str) -> str:
-    """Load API key from st.secrets first, then environment variables."""
+def _get_groq_key() -> str:
+    """
+    Load GROQ_API_KEY with priority:
+      1. Streamlit secrets  (for Streamlit Cloud)
+      2. .env file via python-dotenv  (for local dev)
+      3. OS environment variable  (for containers / CI)
+    """
+    # 1. Streamlit secrets
     try:
-        val = st.secrets.get(name, "")
+        val = st.secrets.get("GROQ_API_KEY", "")
         if val:
-            return str(val)
+            return str(val).strip()
     except Exception:
         pass
-    return os.getenv(name, "")
 
+    # 2. Load .env file
+    load_dotenv()
 
-def _resolve_keys():
-    """Return (openai_key, gemini_key) at call time."""
-    return _get_api_key("OPENAI_API_KEY"), _get_api_key("GEMINI_API_KEY")
+    # 3. Environment variable
+    val = os.getenv("GROQ_API_KEY", "")
+    if val:
+        return str(val).strip()
+
+    return ""
 
 
 # ─────────────────────────────────────────────
@@ -45,14 +69,10 @@ def _resolve_keys():
 
 def get_api_status() -> Dict[str, Any]:
     """Return API availability status for display in sidebar."""
-    openai_key, gemini_key = _resolve_keys()
-    use_openai = bool(openai_key)
-    use_gemini = bool(gemini_key) and not use_openai
+    key = _get_groq_key()
     return {
-        "openai_available": use_openai,
-        "gemini_available": use_gemini,
-        "api_available": use_openai or use_gemini,
-        "provider": "OpenAI" if use_openai else ("Gemini" if use_gemini else "None"),
+        "api_available": bool(key),
+        "provider": "Groq" if key else "None",
     }
 
 
@@ -101,7 +121,7 @@ Analyse this specific resume and return ONLY this JSON structure (no markdown, n
 }}
 
 SCORING RULES:
-- job_match_percentage: Count how many skills from the job description appear in the resume. Divide by total required skills. Adjust ±10 for experience level, project quality, education match. Do NOT default to 75.
+- job_match_percentage: Count how many skills from the job description appear in the resume. Divide by total required skills. Adjust +/-10 for experience level, project quality, education match. Do NOT default to 75.
 - ats_score: Check for: contact info (+10), skills section (+20), education (+15), work experience/projects (+20), keyword density matching job description (+25), readability and action verbs (+10). Do NOT default to 75.
 - missing_skills: Only list skills explicitly mentioned in the job description that are clearly absent from the resume.
 - interview_questions: Make questions SPECIFIC to this candidate — reference their actual skills, projects, and gaps.
@@ -109,29 +129,48 @@ SCORING RULES:
 
 
 # ─────────────────────────────────────────────
-# API CALLERS
+# GROQ API CALLER WITH MODEL FALLBACK
 # ─────────────────────────────────────────────
 
-def _call_openai(prompt: str, api_key: str) -> str:
-    """Call OpenAI API and return raw response text."""
+def _call_groq(prompt: str, api_key: str) -> tuple:
+    """
+    Call Groq API (OpenAI-compatible), trying each model in GROQ_MODELS until one succeeds.
+    Returns (response_text, model_used) on success.
+    Raises the last exception if all models fail.
+    """
     from openai import OpenAI
-    client = OpenAI(api_key=api_key)
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.4,
-        max_tokens=2000,
+
+    client = OpenAI(
+        base_url="https://api.groq.com/openai/v1",
+        api_key=api_key,
     )
-    return response.choices[0].message.content
 
+    last_error = None
+    errors_log = []
 
-def _call_gemini(prompt: str, api_key: str) -> str:
-    """Call Gemini API and return raw response text."""
-    import google.generativeai as genai
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-1.5-flash")
-    response = model.generate_content(prompt)
-    return response.text
+    for model_name in GROQ_MODELS:
+        try:
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.4,
+                max_tokens=2000,
+            )
+            text = response.choices[0].message.content
+            if text and len(text.strip()) > 10:
+                return text, model_name
+            else:
+                errors_log.append(f"{model_name}: empty response")
+        except Exception as e:
+            last_error = e
+            errors_log.append(f"{model_name}: {str(e)[:120]}")
+
+    # Store error log for developer section
+    st.session_state["_api_errors_log"] = errors_log
+
+    if last_error:
+        raise last_error
+    raise RuntimeError("All models returned empty responses")
 
 
 # ─────────────────────────────────────────────
@@ -282,8 +321,8 @@ def analyze_resume(
 ) -> Dict[str, Any]:
     """
     Main entry point for resume analysis.
-    Tries AI API first; falls back to dynamic keyword analysis.
-    Returns a structured dict — never the same for different resumes.
+    Tries Groq API (with model fallback chain) first;
+    falls back to dynamic keyword analysis if API is unavailable or fails.
     """
     required_skills = ROLE_SKILLS.get(role, [])
 
@@ -293,20 +332,13 @@ def analyze_resume(
             f"Looking for a {role} with skills in: " + ", ".join(required_skills)
         )
 
-    # Resolve API keys lazily at call time
-    openai_key, gemini_key = _resolve_keys()
-    use_openai = bool(openai_key)
-    use_gemini = bool(gemini_key) and not use_openai
+    # Resolve API key lazily at call time
+    api_key = _get_groq_key()
 
-    if use_openai or use_gemini:
+    if api_key:
         try:
             prompt = _build_prompt(resume_text, effective_job_desc, role)
-
-            if use_openai:
-                raw_response = _call_openai(prompt, openai_key)
-            else:
-                raw_response = _call_gemini(prompt, gemini_key)
-
+            raw_response, model_used = _call_groq(prompt, api_key)
             result = _parse_json_response(raw_response)
 
             required_fields = [
@@ -320,18 +352,20 @@ def analyze_resume(
             result["job_match_percentage"] = int(result.get("job_match_percentage", 0))
             result["ats_score"] = int(result.get("ats_score", 0))
             result["_used_fallback"] = False
+            result["_model_used"] = model_used
             return result
 
         except Exception as e:
+            st.session_state["_api_error_detail"] = traceback.format_exc()
             st.warning(
-                f"⚠️ AI API call failed ({str(e)[:80]}). "
-                f"Using dynamic keyword analysis as fallback. "
-                f"Results are still based on your actual resume content."
+                "⚠️ AI analysis temporarily unavailable. "
+                "Using smart keyword analysis as fallback — "
+                "results are still based on your actual resume content."
             )
 
-    if not use_openai and not use_gemini:
+    if not api_key:
         st.info(
-            "ℹ️ No API key configured. "
+            "ℹ️ No Groq API key configured. "
             "Running dynamic keyword-based analysis on your resume."
         )
 

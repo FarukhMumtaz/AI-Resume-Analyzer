@@ -247,9 +247,9 @@ with st.sidebar:
     st.markdown("### ⚡ API Status")
     api_status = get_api_status()
     if api_status["api_available"]:
-        st.success(f"✅ {api_status['provider']} API connected")
+        st.success("✅ Groq API connected")
     else:
-        st.warning("⚠️ No API key found\nUsing keyword-based analysis")
+        st.warning("⚠️ No API key found — using fallback analysis")
 
     st.markdown("---")
     st.markdown("### 📁 Supported Formats")
@@ -457,6 +457,22 @@ if analyze_btn:
 
         if result.get("_used_fallback"):
             st.caption("ℹ️ Analysis performed using keyword-based engine (API unavailable).")
+        elif result.get("_model_used"):
+            st.caption(f"✨ Analysis powered by AI model: `{result['_model_used']}`")
+
+        # Developer expandable section for API debugging
+        with st.expander("🔧 Developer Details", expanded=False):
+            if result.get("_model_used"):
+                st.markdown(f"**Model used:** `{result['_model_used']}`")
+            if result.get("_used_fallback"):
+                st.markdown("**Mode:** Local keyword-based fallback")
+            if st.session_state.get("_api_errors_log"):
+                st.markdown("**API attempt log:**")
+                for log_entry in st.session_state["_api_errors_log"]:
+                    st.code(log_entry, language="text")
+            if st.session_state.get("_api_error_detail"):
+                st.markdown("**Last error traceback:**")
+                st.code(st.session_state["_api_error_detail"], language="text")
 
     # ── TAB 2: SKILLS ANALYSIS ───────────────────────
     with tab2:
@@ -645,7 +661,7 @@ if analyze_btn:
 st.markdown("---")
 st.markdown(
     '<div style="text-align:center;color:#9ca3af;font-size:0.8rem;">'
-    '🚀 AI Resume Analyzer · Built with Streamlit + OpenAI/Gemini · '
+    '🚀 AI Resume Analyzer · Built with Streamlit + Groq AI · '
     'Smart ATS & Job Match Assistant'
     '</div>',
     unsafe_allow_html=True,
